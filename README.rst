@@ -4,8 +4,6 @@ Church Music Scraper
 
 An example project to scrape church music
 
-|architecture-overview|
-
 Best practices
 ==============
 
