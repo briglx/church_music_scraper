@@ -9,6 +9,7 @@ repos:
         - id: codespell
           args:
             - '--skip="./.*,*.csv,*.json,*.pyc,./docs/_build/*,./htmlcov/*"'
+            - '--ignore-words=.codespell_ignore'
             - '--quiet-level=2'
           exclude_types:
             - csv

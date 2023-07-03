@@ -21,6 +21,14 @@ Setup instructions to use the project.
 
     python main.py
 
+    # Specific examples
+    python main.py --site_url https://www.churchofjesuschrist.org/media/collection/youth-music?lang=eng
+
+    python main.py -a --site_url https://www.churchofjesuschrist.org/media/collection/songs-of-devotion-for-everyday-listening?lang=eng
+
+
+
+
 Development
 ===========
 

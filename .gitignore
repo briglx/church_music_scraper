@@ -54,4 +54,5 @@ coverage.xml
 
 # Project Specific
 music
+music_old
 local.env

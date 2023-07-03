@@ -48,9 +48,9 @@ async def create_music_folder():
         LOGGER.info("Folder already exists to make folder:  %s", folder_name)
 
 
-async def create_album_folder(album_title):
+async def create_folder(sub_folder_name):
     """Create sub folder for album."""
-    folder_name = os.path.join(get_music_folder(), album_title)
+    folder_name = os.path.join(get_music_folder(), sub_folder_name)
 
     LOGGER.info("Making folder: %s", folder_name)
 
@@ -60,10 +60,46 @@ async def create_album_folder(album_title):
         LOGGER.info("Folder already exists:  %s", folder_name)
 
 
-def get_full_file_name(album_title, track_title, track_no):
+async def create_album_folder(album_title, collection_title=None):
+    """Create sub folder for album."""
+    if collection_title:
+        folder_name = os.path.join(get_music_folder(), collection_title, album_title)
+    else:
+        folder_name = os.path.join(get_music_folder(), album_title)
+
+    LOGGER.info("Making folder: %s", folder_name)
+
+    if not await async_os.path.exists(folder_name):
+        await async_os.mkdir(folder_name)
+    else:
+        LOGGER.info("Folder already exists:  %s", folder_name)
+
+
+def clean_name(name):
+    """Ensure title is a valid name."""
+    name = name.replace("<em>", "")
+    name = name.replace("—", "-")
+    name = name.replace("–", "-")
+    name = name.replace("‘", "'")
+    name = name.replace("’", "'")
+    # track_title = track_title.replace("?","")
+    # track_title = track_title.replace("!","")
+    name = re.sub(r"[^a-zA-Z0-9\s\.\-\']", "", name)
+    name = name.replace("  ", " ")
+    name = name.replace("  ", " ")
+    return name
+
+
+def get_full_file_name(album_title, track_title, track_no, collection_title=None):
     """Get full path for track."""
     filename = f"{track_no:02d} {track_title}.mp3"
-    file_path = os.path.join(get_music_folder(), album_title, filename)
+    if collection_title:
+        file_path = os.path.join(
+            get_music_folder(), collection_title, album_title, filename
+        )
+    else:
+        file_path = os.path.join(get_music_folder(), album_title, filename)
+
     return file_path
 
 
@@ -115,14 +151,9 @@ def has_album_detail(div_element):
     return True
 
 
-async def get_album_links(session, url):
+def get_album_links(soup):
     """Get album links from site."""
     album_links = []
-
-    html = await fetch_url(session, url)
-    if html is None:
-        return
-    soup = BeautifulSoup(await html.text(), "html.parser")
 
     div_album_collection = soup.find("div", attrs={"data-testid": "CollectionGridView"})
     for a_tag in div_album_collection.find_all("a"):
@@ -138,129 +169,162 @@ async def get_album_links(session, url):
     return album_links
 
 
-async def scrape_album_site(session, url):
-    """Scrape the album site following urls."""
-    track_idx = 0
-    html = await fetch_url(session, url)
-    if html is None:
-        return
+# async def get_album_from_json(session, url, soup):
+#     """Get Album details from site."""
+#     album_title = None
+#     tracks = []
 
-    # html = await fetch_url(url)
-    soup = BeautifulSoup(await html.text(), "html.parser")
+#     if soup.find("script", attrs={"type": "application/json"}):
 
-    # Get Album Title
-    header = soup.find("header")
-    h1_title = header.find("h1", recursive=False)
-    album_title = h1_title.text.strip()
+#         json_data = json.loads(
+#             soup.find("script", attrs={"type": "application/json"}).string
+#         )
 
-    links = []
-    div_track_collection = soup.find("div", attrs={"data-testid": "CollectionListView"})
-    a_tags = div_track_collection.find_all("a", recursive=False)
-    for a_tag in a_tags:
-        links.append(a_tag["href"])
+#         album_title = json_data["props"]["pageProps"]["title"].strip()
 
-    await create_album_folder(album_title)
+#         for item in json_data["props"]["pageProps"].get("items", []):
+#             track_title = item["title"].strip()
+#             audio_src = item["downloads"][0].get("url")
 
-    tasks = []
-    for link in links:
-        joined_link = join_url(url, link)
-        tasks.append(
-            process_child_page(session, joined_link, album_title, track_idx + 1)
-        )
-        track_idx = track_idx + 1
+#             tracks.append((track_title, audio_src))
 
-    await asyncio.gather(*tasks)
+#         return (album_title, tracks)
 
 
-async def get_album_from_json(session, url):
-    """Get Album details from site."""
-    album_title = None
-    tracks = []
-    html = await fetch_url(session, url)
-    if html is None:
-        return
-    soup = BeautifulSoup(await html.text(), "html.parser")
-
+async def scrape_album_json(session, soup, collection_title=None):
+    """Scrape the album site's json data."""
     if soup.find("script", attrs={"type": "application/json"}):
 
         json_data = json.loads(
             soup.find("script", attrs={"type": "application/json"}).string
         )
 
-        album_title = json_data["props"]["pageProps"]["title"].strip()
+        if "err" in json_data:
+            raise LookupError("This item is not available for download.")
 
-        for item in json_data["props"]["pageProps"].get("items", []):
-            track_title = item["title"].strip()
-            audio_src = item["downloads"][0].get("url")
-
-            tracks.append((track_title, audio_src))
-
-        return (album_title, tracks)
-
-
-async def scrape_album_json(session, url):
-    """Scrape the album site's json data."""
-    album_info = get_album_from_json(session, url)
-    if album_info is None:
-        return
-
-    album_title, tracks = album_info
-    await create_album_folder(album_title)
-
-    tasks = []
-    for idx, item in enumerate(tracks):
-        track_title, audio_src = item
-        full_file_name = get_full_file_name(album_title, track_title, idx + 1)
-        tasks.append(save_mp3(session, audio_src, full_file_name))
-
-        await asyncio.gather(*tasks)
-
-
-async def process_child_page(session, url, album_title, track_no):
-    """Parse and save track."""
-    track_title = None
-    audio_src = None
-
-    html = await fetch_url(session, url)
-    if html:
-        soup = BeautifulSoup(await html.text(), "html.parser")
-        div_elements = soup.find_all("div")
-
-        # Iterate through the div elements
-        for div in div_elements:
-            # Check if the div contains an h1, button, and section
-            if div.find("h1") and div.find("button") and div.find("section"):
-                track_title = div.find("h1").text.strip()
-
-        # get audio link
-        audio_tag = soup.find("audio")
-        if audio_tag and audio_tag.has_attr("src"):
-            audio_src = audio_tag["src"]
+        album_title = clean_name(json_data["props"]["pageProps"]["title"].strip())
+        await create_album_folder(album_title, collection_title)
 
         tasks = []
-        if track_title and audio_src:
-            track_title = re.sub(r"[^a-zA-Z0-9\s\.]", "", track_title)
-            full_file_name = get_full_file_name(album_title, track_title, track_no)
+        for idx, item in enumerate(json_data["props"]["pageProps"].get("items", [])):
+            track_title = clean_name(item["title"].strip())
+            audio_src = item["downloads"][0].get("url")
+            full_file_name = get_full_file_name(
+                album_title, track_title, idx + 1, collection_title
+            )
+
             tasks.append(save_mp3(session, audio_src, full_file_name))
 
         await asyncio.gather(*tasks)
-
     else:
-        print(f"No track for {url}")
+        raise LookupError("Json data not found on the page.")
 
 
-async def scrape_youth_music_site(session, url):
+async def scrape_album_html(session, url, soup, collection_title=None):
+    """Get Album details from site."""
+    header = soup.find("header")
+    h1_title = header.find("h1", recursive=False)
+    album_title = clean_name(h1_title.text.strip())
+    await create_album_folder(album_title, collection_title)
+
+    div_track_collection = soup.find("div", attrs={"data-testid": "CollectionListView"})
+    a_tags = div_track_collection.find_all("a", recursive=False)
+
+    tasks = []
+    for idx, item in enumerate(a_tags):
+        track_url = join_url(url, item["href"])
+        tasks.append(
+            scrape_child_page(
+                session, track_url, album_title, idx + 1, collection_title
+            )
+        )
+
+    await asyncio.gather(*tasks)
+
+
+async def scrape_child_page(session, url, album_title, track_no, collection_title=None):
+    """Parse and save track."""
+    html = await fetch_url(session, url)
+    if html is None:
+        return
+
+    soup = BeautifulSoup(await html.text(), "html.parser")
+
+    # Look for track_title
+    track_title = None
+    div_elements = soup.find_all("div")
+    for div in div_elements:
+        # Check if the div contains an h1, button, and section
+        if div.find("h1") and div.find("button") and div.find("section"):
+            track_title = clean_name(div.find("h1").text.strip())
+
+    # get audio link
+    audio_src = None
+    audio_tag = soup.find("audio")
+    if audio_tag and audio_tag.has_attr("src"):
+        audio_src = audio_tag["src"]
+
+    tasks = []
+    if track_title and audio_src:
+        full_file_name = get_full_file_name(
+            album_title, track_title, track_no, collection_title
+        )
+        tasks.append(save_mp3(session, audio_src, full_file_name))
+
+    await asyncio.gather(*tasks)
+
+
+def has_json_data(soup):
+    """Check if page has json data."""
+    # Search for the text 'mp3' or 'pageProps' in script tags
+    script_tags = soup.find_all("script")
+    for script_tag in script_tags:
+        script_text = script_tag.get_text()
+        if "mp3" in script_text or "pageProps" in script_text:
+            return True
+
+    return False
+
+
+async def scrape_album_site(session, url, collection_title=None):
+    """Scrape the album site following urls."""
+    html = await fetch_url(session, url)
+    if html is None:
+        return
+
+    soup = BeautifulSoup(await html.text(), "html.parser")
+
+    try:
+        if has_json_data(soup):
+            await scrape_album_json(session, soup, collection_title)
+        else:
+            await scrape_album_html(session, soup, collection_title)
+    except LookupError:
+        LOGGER.error("Failed to parse Album %s", url)
+
+
+async def scrape_collection_site(session, url):
     """Scrape the music site following urls."""
     tasks = []
 
-    album_links = await get_album_links(session, url)
+    html = await fetch_url(session, url)
+    if html is None:
+        return
+
+    soup = BeautifulSoup(await html.text(), "html.parser")
+
+    h1_title = soup.find("h1")
+    collection_title = clean_name(h1_title.text.strip())
+    await create_folder(collection_title)
+
+    album_links = get_album_links(soup)
 
     for album_link in album_links:
         album_title, album_track_count, link = album_link
 
         LOGGER.info("Parsing Album: %s %s at %s", album_title, album_track_count, link)
         joined_link = join_url(url, link)
-        tasks.append(scrape_album_json(session, joined_link))
+        tasks.append(scrape_album_site(session, joined_link, collection_title))
 
     await asyncio.gather(*tasks)
 
@@ -270,7 +334,10 @@ async def main():
     await create_music_folder()
 
     async with aiohttp.ClientSession() as session:
-        await scrape_youth_music_site(session, SITE_URL)
+        if IS_ALBUM:
+            await scrape_album_site(session, SITE_URL)
+        else:
+            await scrape_collection_site(session, SITE_URL)
 
 
 if __name__ == "__main__":
@@ -288,10 +355,16 @@ if __name__ == "__main__":
         "-m",
         help="Path to music folder",
     )
+    parser.add_argument(
+        "-a",
+        action="store_true",
+        help="Url path is an album.",
+    )
     args = parser.parse_args()
 
     SITE_URL = args.site_url or os.environ.get("SITE_URL")
     MUSIC_PATH = args.music_path or os.environ.get("MUSIC_PATH")
+    IS_ALBUM = args.a
 
     if not SITE_URL:
         raise ValueError(
