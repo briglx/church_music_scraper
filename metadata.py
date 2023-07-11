@@ -96,6 +96,7 @@ def needs_new_name(filepath):
     """Check if file needs new name."""
     rename_album_paths = [
         "Childrens Songbook-Music Only",
+        "Children's Songbook-Music Only",
         "Childrens Songbook-Words and Music",
         "Hymns-Music Only",
         "Hymns-Words and Music",
@@ -160,6 +161,17 @@ def use_tag_track_no(filepath):
         if "Prayer of Thanksgiving" in filepath:
             track_no = "930"
 
+    if "Children's Songbook-Music Only" in album_path:
+        track_no = track_no[:-1]
+        track_no = int(track_no)
+        if "Heritage" in filepath:
+            track_no = track_no + 30
+        if "Nature and Seasons" in filepath:
+            track_no = track_no + 33
+        if "Prelude Music" in filepath:
+            track_no = track_no + 32
+        track_no = f"{track_no:d}0"
+
     track_no = int(track_no)
 
     # update file with track no
@@ -190,6 +202,11 @@ def get_new_name(filepath):
         new_filepath = remove_track_no_trailing_zero(new_filepath)
         return new_filepath
 
+    if "Children's Songbook-Music Only" in filepath:
+        new_filepath = use_tag_track_no(filepath)
+        new_filepath = remove_track_no_trailing_zero(new_filepath)
+        return new_filepath
+
     if "Childrens Songbook-Words and Music" in filepath:
         new_filepath = use_tag_track_no(filepath)
         new_filepath = remove_track_no_trailing_zero(new_filepath)
@@ -201,7 +218,9 @@ def get_new_name(filepath):
 async def main():
     """Use metadata to update files."""
     track_list = []
-    for root, _, files in os.walk(MUSIC_PATH):
+    path = MUSIC_PATH
+    path = "music_20230710_2/Children's Songbook-Music Only"
+    for root, _, files in os.walk(path):
         for file in files:
 
             filepath = os.path.join(root, file)
