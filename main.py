@@ -232,9 +232,8 @@ async def scrape_album_html(session, url, soup, collection_title=None):
     await asyncio.gather(*tasks)
 
 
-def get_collection_url(base_url, soup):
+def get_collection_url(collection_id, base_url):
     """Get collection full url."""
-    collection_id = get_collection_id(soup)
     collection_url = COLLECTION_PATH_PATTERN.replace("collection_id", collection_id)
     full_url = join_url(base_url, collection_url)
     return full_url
@@ -249,12 +248,8 @@ async def create_album_folder_from_page(soup, collection_title):
     return album_title
 
 
-async def scrape_album_api(session, url, soup, collection_title):
-    """Fetch tracks by the api."""
-    album_title = await create_album_folder_from_page(soup, collection_title)
-
-    # Get items by api call
-    collection_url = get_collection_url(url, soup)
+async def save_collection_files(session, collection_url, album_title, collection_title):
+    """Save all files for the collection_id."""
     response = await fetch_url(session, collection_url)
     if response.status == 200:
         json_data = await response.json()
@@ -278,7 +273,24 @@ async def scrape_album_api(session, url, soup, collection_title):
         else:
             raise LookupError("No items in the data data not found on the page.")
     else:
-        raise LookupError("Bad response.")
+        response_text = await response.text()
+        LOGGER.error(
+            "Bad response for collection '%s' and album '%s'. '%s' for url '%s'",
+            collection_title,
+            album_title,
+            response_text,
+            collection_url,
+        )
+
+
+async def scrape_album_api(session, url, soup, collection_title):
+    """Fetch tracks by the api."""
+    album_title = await create_album_folder_from_page(soup, collection_title)
+
+    # Get items by api call
+    collection_id = get_collection_id(soup)
+    collection_url = get_collection_url(collection_id, url)
+    await save_collection_files(session, collection_url, album_title, collection_title)
 
 
 async def scrape_child_page(session, url, album_title, track_no, collection_title=None):
@@ -348,6 +360,37 @@ async def scrape_album_site(session, url, collection_title=None):
         LOGGER.error("Failed to parse Album %s", url)
 
 
+async def scrape_collection_api(session, url, soup, collection_title):
+    """Use the api to fetch collection files."""
+    if soup.find("script", attrs={"type": "application/json"}):
+
+        json_data = json.loads(
+            soup.find("script", attrs={"type": "application/json"}).string
+        )
+
+        if "err" in json_data:
+            raise LookupError("This collection is not available for download.")
+
+        tasks = []
+        for _, item in enumerate(json_data["props"]["pageProps"].get("items", [])):
+
+            album_title = clean_name(item["title"].strip())
+            await create_album_folder(album_title, collection_title)
+
+            collection_id = item["id"].strip()
+
+            collection_url = get_collection_url(collection_id, url)
+            tasks.append(
+                save_collection_files(
+                    session, collection_url, album_title, collection_title
+                )
+            )
+
+        await asyncio.gather(*tasks)
+    else:
+        raise LookupError("Json data not found on the page.")
+
+
 async def scrape_collection_site(session, url):
     """Scrape the music site following urls."""
     tasks = []
@@ -362,16 +405,22 @@ async def scrape_collection_site(session, url):
     collection_title = clean_name(h1_title.text.strip())
     await create_folder(collection_title)
 
-    album_links = get_album_links(soup)
+    # Check if collection has collection_ids
+    if has_json_data(soup):
+        await scrape_collection_api(session, url, soup, collection_title)
+    else:
+        album_links = get_album_links(soup)
 
-    for album_link in album_links:
-        album_title, album_track_count, link = album_link
+        for album_link in album_links:
+            album_title, album_track_count, link = album_link
 
-        LOGGER.info("Parsing Album: %s %s at %s", album_title, album_track_count, link)
-        joined_link = join_url(url, link)
-        tasks.append(scrape_album_site(session, joined_link, collection_title))
+            LOGGER.info(
+                "Parsing Album: %s %s at %s", album_title, album_track_count, link
+            )
+            joined_link = join_url(url, link)
+            tasks.append(scrape_album_site(session, joined_link, collection_title))
 
-    await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks)
 
 
 async def main():
