@@ -22,12 +22,19 @@ Setup instructions to use the project.
     python main.py
 
     # Specific examples
-    python main.py --site_url https://www.churchofjesuschrist.org/media/collection/youth-music?lang=eng
+    collection_url='https://www.churchofjesuschrist.org/media/collection/youth-music?lang=eng'
+    albumn_url='https://www.churchofjesuschrist.org/media/collection/songs-of-devotion-for-everyday-listening?lang=eng'
 
-    python main.py -a --site_url https://www.churchofjesuschrist.org/media/collection/songs-of-devotion-for-everyday-listening?lang=eng
+    python main.py --site_url $collection_url
 
+    python main.py -a --site_url $albumn_url
 
+    # Rename hymns to match hymn number
+    python metadata.py
 
+    # Quick way to call
+    fetch.sh $collection_url
+    fetch.sh -a $albumn_url
 
 Development
 ===========
@@ -117,12 +124,12 @@ Now that you have all test dependencies installed, you can run tests on the proj
 .. code-block:: bash
 
     isort .
-    codespell  --skip="./.*,*.csv,*.json,*.pyc,./docs/_build/*,./htmlcov/*"
-    black main.py
-    flake8 main.py
-    pylint main.py
+    codespell  --skip="./.*,*.csv,*.json,*.pyc,./docs/_build/*,./htmlcov/*" --ignore-words=.codespell_ignore
+    black main.py metadata.py
+    flake8 main.py metadata.py
+    pylint main.py metadata.py
     rstcheck README.rst
-    pydocstyle main.py
+    pydocstyle main.py metadata.py
 
 
 References

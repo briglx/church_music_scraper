@@ -151,6 +151,21 @@ def has_album_detail(div_element):
     return True
 
 
+def get_collection_id(soup):
+    """Return the collection id for the page."""
+    anchor_tags = soup.find_all("a")
+    for anchor_tag in anchor_tags:
+        href = anchor_tag.get("href")
+        if href:
+            parsed_url = urllib.parse.urlparse(href)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            if "collectionId" in query_params:
+                collection_id = query_params["collectionId"][0]
+                return collection_id
+
+    return None
+
+
 def get_album_links(soup):
     """Get album links from site."""
     album_links = []
@@ -167,28 +182,6 @@ def get_album_links(soup):
                 album_links.append((album_title, album_track_count, a_tag["href"]))
 
     return album_links
-
-
-# async def get_album_from_json(session, url, soup):
-#     """Get Album details from site."""
-#     album_title = None
-#     tracks = []
-
-#     if soup.find("script", attrs={"type": "application/json"}):
-
-#         json_data = json.loads(
-#             soup.find("script", attrs={"type": "application/json"}).string
-#         )
-
-#         album_title = json_data["props"]["pageProps"]["title"].strip()
-
-#         for item in json_data["props"]["pageProps"].get("items", []):
-#             track_title = item["title"].strip()
-#             audio_src = item["downloads"][0].get("url")
-
-#             tracks.append((track_title, audio_src))
-
-#         return (album_title, tracks)
 
 
 async def scrape_album_json(session, soup, collection_title=None):
@@ -222,10 +215,7 @@ async def scrape_album_json(session, soup, collection_title=None):
 
 async def scrape_album_html(session, url, soup, collection_title=None):
     """Get Album details from site."""
-    header = soup.find("header")
-    h1_title = header.find("h1", recursive=False)
-    album_title = clean_name(h1_title.text.strip())
-    await create_album_folder(album_title, collection_title)
+    album_title = await create_album_folder_from_page(soup, collection_title)
 
     div_track_collection = soup.find("div", attrs={"data-testid": "CollectionListView"})
     a_tags = div_track_collection.find_all("a", recursive=False)
@@ -240,6 +230,55 @@ async def scrape_album_html(session, url, soup, collection_title=None):
         )
 
     await asyncio.gather(*tasks)
+
+
+def get_collection_url(base_url, soup):
+    """Get collection full url."""
+    collection_id = get_collection_id(soup)
+    collection_url = COLLECTION_PATH_PATTERN.replace("collection_id", collection_id)
+    full_url = join_url(base_url, collection_url)
+    return full_url
+
+
+async def create_album_folder_from_page(soup, collection_title):
+    """Create album folder from page."""
+    header = soup.find("header")
+    h1_title = header.find("h1", recursive=False)
+    album_title = clean_name(h1_title.text.strip())
+    await create_album_folder(album_title, collection_title)
+    return album_title
+
+
+async def scrape_album_api(session, url, soup, collection_title):
+    """Fetch tracks by the api."""
+    album_title = await create_album_folder_from_page(soup, collection_title)
+
+    # Get items by api call
+    collection_url = get_collection_url(url, soup)
+    response = await fetch_url(session, collection_url)
+    if response.status == 200:
+        json_data = await response.json()
+
+        if "err" in json_data:
+            raise LookupError("This item is not available for download.")
+
+        if "items" in json_data:
+            tasks = []
+            for idx, item in enumerate(json_data["items"]):
+
+                track_title = clean_name(item["title"].strip())
+                audio_src = item["downloads"][0].get("url")
+                full_file_name = get_full_file_name(
+                    album_title, track_title, idx + 1, collection_title
+                )
+
+                tasks.append(save_mp3(session, audio_src, full_file_name))
+
+            await asyncio.gather(*tasks)
+        else:
+            raise LookupError("No items in the data data not found on the page.")
+    else:
+        raise LookupError("Bad response.")
 
 
 async def scrape_child_page(session, url, album_title, track_no, collection_title=None):
@@ -295,10 +334,16 @@ async def scrape_album_site(session, url, collection_title=None):
     soup = BeautifulSoup(await html.text(), "html.parser")
 
     try:
-        if has_json_data(soup):
+        if get_collection_id(soup):
+            # Try to call json directly
+            await scrape_album_api(session, url, soup, collection_title)
+
+        elif has_json_data(soup):
+            # Try to call json directly
             await scrape_album_json(session, soup, collection_title)
+
         else:
-            await scrape_album_html(session, soup, collection_title)
+            await scrape_album_html(session, url, soup, collection_title)
     except LookupError:
         LOGGER.error("Failed to parse Album %s", url)
 
@@ -364,6 +409,7 @@ if __name__ == "__main__":
 
     SITE_URL = args.site_url or os.environ.get("SITE_URL")
     MUSIC_PATH = args.music_path or os.environ.get("MUSIC_PATH")
+    COLLECTION_PATH_PATTERN = os.environ.get("COLLECTION_PATH_PATTERN")
     IS_ALBUM = args.a
 
     if not SITE_URL:
@@ -374,5 +420,11 @@ if __name__ == "__main__":
         raise ValueError(
             "Music path is required. Have you set the MUSIC_PATH env variable?"
         )
+
+    if not COLLECTION_PATH_PATTERN:
+        raise ValueError(
+            "Pattern is required. Have you set the COLLECTION_PATH_PATTERN env variable?"
+        )
+
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
